@@ -5,7 +5,7 @@ const test     = require('tape')
 
 
 function signBlob (key, blob) {
-  return 'sha1=' + 
+  return 'sha1=' +
   crypto.createHmac('sha1', key).update(blob).digest('hex')
 }
 
@@ -39,15 +39,13 @@ function mkRes () {
 
 
 test('handler without full options throws', function (t) {
-  t.plan(4)
+  t.plan(3)
 
   t.equal(typeof handler, 'function', 'handler exports a function')
 
   t.throws(handler, /must provide an options object/, 'throws if no options')
 
   t.throws(handler.bind(null, {}), /must provide a 'path' option/, 'throws if no path option')
-
-  t.throws(handler.bind(null, { path: '/' }), /must provide a 'secret' option/, 'throws if no secret option')
 })
 
 
@@ -208,3 +206,31 @@ test('handler rejects a badly signed blob', function (t) {
     req.end(json)
   })
 })
+
+test('secret is optional', function(t) {
+  t.plan(1);
+
+  try {
+    var h = handler({ path: '/' })
+  } catch (e) {
+    t.fail('secret should not be required')
+  }
+
+  var req = mkReq('/')
+    , res = mkRes()
+
+  delete req.headers['x-hub-signature']
+  req.headers['x-github-event']  = 'push'
+
+  h.on('push', function (event) {
+    t.ok(event, 'got push event')
+  })
+
+  h(req, res, function (err) {
+    t.fail(true, 'should not get here!')
+  })
+
+  process.nextTick(function () {
+    req.end('{}')
+  })
+});
