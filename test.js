@@ -5,7 +5,7 @@ const test     = require('tape')
 
 
 function signBlob (key, blob) {
-  return 'sha1=' + 
+  return 'sha1=' +
   crypto.createHmac('sha1', key).update(blob).digest('hex')
 }
 
@@ -55,23 +55,26 @@ test('handler ignores invalid urls', function (t) {
   var options = { path: '/some/url', secret: 'bogus' }
     , h       = handler(options)
 
-  t.plan(6)
+  t.plan(9)
 
-  h(mkReq('/'), mkRes(), function (err) {
+  h(mkReq('/'), mkRes(), function (err, event) {
     t.error(err)
     t.ok(true, 'request was ignored')
+    t.ok(!event, 'ensure the event is not propagated')
   })
 
   // near match
-  h(mkReq('/some/url/'), mkRes(), function (err) {
+  h(mkReq('/some/url/'), mkRes(), function (err, event) {
     t.error(err)
     t.ok(true, 'request was ignored')
+    t.ok(!event, 'ensure the event is not propagated')
   })
 
   // partial match
-  h(mkReq('/some'), mkRes(), function (err) {
+  h(mkReq('/some'), mkRes(), function (err, event) {
     t.error(err)
     t.ok(true, 'request was ignored')
+    t.ok(!event, 'ensure the event is not propagated')
   })
 })
 
@@ -91,28 +94,8 @@ test('handler accepts valid urls', function (t) {
 })
 
 
-// because we don't inherit in a traditional way
-test('handler is an EventEmitter', function (t) {
-  t.plan(5)
-
-  var h = handler({ path: '/', secret: 'bogus' })
-
-  t.equal(typeof h.on, 'function', 'has h.on()')
-  t.equal(typeof h.emit, 'function', 'has h.emit()')
-  t.equal(typeof h.removeListener, 'function', 'has h.removeListener()')
-
-  h.on('ping', function (pong) {
-    t.equal(pong, 'pong', 'got event')
-  })
-
-  h.emit('ping', 'pong')
-
-  t.throws(h.emit.bind(h, 'error', new Error('threw an error')), /threw an error/, 'acts like an EE')
-})
-
-
 test('handler accepts a signed blob', function (t) {
-  t.plan(4)
+  t.plan(5)
 
   var obj  = { some: 'github', object: 'with', properties: true }
     , json = JSON.stringify(obj)
@@ -123,26 +106,19 @@ test('handler accepts a signed blob', function (t) {
   req.headers['x-hub-signature'] = signBlob('bogus', json)
   req.headers['x-github-event']  = 'push'
 
-  h.on('push', function (event) {
+  h(req, res, function (err, event) {
+    t.ok(!err)
     t.deepEqual(event, { event: 'push', id: 'bogus', payload: obj, url: '/' })
     t.equal(res.$statusCode, 200, 'correct status code')
     t.deepEqual(res.$headers, { 'content-type': 'application/json' })
     t.equal(res.$end, '{"ok":true}', 'got correct content')
   })
 
-  h(req, res, function (err) {
-    t.error(err)
-    t.fail(true, 'should not get here!')
-  })
-
-  process.nextTick(function () {
-    req.end(json)
-  })
+  req.end(json)
 })
 
-
 test('handler accepts a signed blob with alt event', function (t) {
-  t.plan(4)
+  t.plan(5)
 
   var obj  = { some: 'github', object: 'with', properties: true }
     , json = JSON.stringify(obj)
@@ -153,30 +129,21 @@ test('handler accepts a signed blob with alt event', function (t) {
   req.headers['x-hub-signature'] = signBlob('bogus', json)
   req.headers['x-github-event']  = 'issue'
 
-  h.on('push', function (event) {
-    t.fail(true, 'should not get here!')
-  })
+  h(req, res, function (err, event) {
+    t.error(err)
 
-  h.on('issue', function (event) {
     t.deepEqual(event, { event: 'issue', id: 'bogus', payload: obj, url: '/' })
     t.equal(res.$statusCode, 200, 'correct status code')
     t.deepEqual(res.$headers, { 'content-type': 'application/json' })
     t.equal(res.$end, '{"ok":true}', 'got correct content')
   })
 
-  h(req, res, function (err) {
-    t.error(err)
-    t.fail(true, 'should not get here!')
-  })
-
-  process.nextTick(function () {
-    req.end(json)
-  })
+  req.end(json)
 })
 
 
 test('handler rejects a badly signed blob', function (t) {
-  t.plan(6)
+  t.plan(2)
 
   var obj  = { some: 'github', object: 'with', properties: true }
     , json = JSON.stringify(obj)
@@ -188,23 +155,10 @@ test('handler rejects a badly signed blob', function (t) {
   // break signage by a tiny bit
   req.headers['x-hub-signature'] = '0' + req.headers['x-hub-signature'].substring(1)
 
-  h.on('error', function (err, _req) {
-    t.ok(err, 'got an error')
-    t.strictEqual(_req, req, 'was given original request object')
-    t.equal(res.$statusCode, 400, 'correct status code')
-    t.deepEqual(res.$headers, { 'content-type': 'application/json' })
-    t.equal(res.$end, '{"error":"X-Hub-Signature does not match blob signature"}', 'got correct content')
+  h(req, res, function (err, event) {
+    t.equal(err.message, 'X-Hub-Signature does not match blob signature')
+    t.ok(!event)
   })
 
-  h.on('push', function (event) {
-    t.fail(true, 'should not get here!')
-  })
-
-  h(req, res, function (err) {
-    t.ok(err, 'got error on callback')
-  })
-
-  process.nextTick(function () {
-    req.end(json)
-  })
+  req.end(json)
 })
